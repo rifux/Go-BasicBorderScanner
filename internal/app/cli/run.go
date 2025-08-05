@@ -12,14 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rifux/Go-BasicBorderScanner/internal/imageutil"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
-
-	"github.com/rifux/Go-BasicBorderScanner/internal/imageutil"
 )
 
 type encoderFn func(w *os.File, m image.Image) error
 
+// encoderFor gets the correct image encoder function for a given format name.
 func encoderFor(fmtName string) (encoderFn, error) {
 	switch strings.ToLower(fmtName) {
 	case "png":
@@ -30,42 +30,86 @@ func encoderFor(fmtName string) (encoderFn, error) {
 		}, nil
 	case "gif":
 		return func(w *os.File, m image.Image) error { return gif.Encode(w, m, nil) }, nil
-	case "tiff":
+	case "tiff", "tif":
 		return func(w *os.File, m image.Image) error {
 			return tiff.Encode(w, m, &tiff.Options{Compression: tiff.Deflate})
 		}, nil
 	case "bmp":
 		return func(w *os.File, m image.Image) error { return bmp.Encode(w, m) }, nil
 	default:
-		return nil, fmt.Errorf("unsupported output format %q", fmtName)
+		return nil, fmt.Errorf("unsupported output format %q (from file extension)", fmtName)
 	}
 }
 
-func Run(ctx context.Context, _ string) error {
-	fs := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ExitOnError)
+// Run executes the command-line interface logic.
+func Run(ctx context.Context, args []string) error {
+	cliFlags := flag.NewFlagSet("cli", flag.ExitOnError)
 
-	inPath := fs.String("in", "", "input image")
-	outPath := fs.String("out", "out", "output file")
-	outFmt := fs.String("outfmt", "png", "output format")
+	// Define flags for the CLI mode. Note that -outfmt is now gone.
+	inPath := cliFlags.String("in", "", "input image (png, jpg, etc) (required)")
+	outPath := cliFlags.String("out", "out.png", "output file (format inferred from extension)")
+	logMode := cliFlags.String("log", "auto", "log output mode: auto|json|text")
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	cliFlags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s cli [flags]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintln(os.Stderr, "Flags for cli command:")
+		cliFlags.PrintDefaults()
+	}
+
+	if err := cliFlags.Parse(args); err != nil {
 		return err
 	}
+
 	if *inPath == "" {
-		return fmt.Errorf("flag -in is required")
+		cliFlags.Usage()
+		return fmt.Errorf("\nError: flag -in is required")
 	}
 
+	// --- NEW LOGIC STARTS HERE ---
+
+	outFilename := *outPath
+	var outputFormat string
+
+	// Get the file extension from the output filename.
+	ext := filepath.Ext(outFilename)
+
+	if ext == "" {
+		// If no extension, default to "png".
+		outputFormat = "png"
+		outFilename += "." + outputFormat // Append ".png" to the filename.
+	} else {
+		// If an extension exists, use it as the format.
+		// Trim the leading dot, e.g., ".jpg" becomes "jpg".
+		outputFormat = strings.TrimPrefix(ext, ".")
+	}
+
+	fmt.Printf("Input: %s\n", *inPath)
+	fmt.Printf("Output: %s (format: %s)\n", outFilename, outputFormat)
+	fmt.Printf("Log mode: %s\n", *logMode)
+
+	// Get the encoder function based on the determined format.
+	enc, err := encoderFor(outputFormat)
+	if err != nil {
+		// This will now catch invalid extensions like "result.txt".
+		return err
+	}
+
+	// --- END OF NEW LOGIC ---
+
+	// Open input file
 	src, err := os.Open(*inPath)
 	if err != nil {
 		return err
 	}
 	defer src.Close()
 
+	// Decode image
 	img, _, err := image.Decode(src)
 	if err != nil {
 		return err
 	}
 
+	// Process image (Otsu binarization and contour drawing)
 	binImg, err := imageutil.OtsuBinarize(ctx, img)
 	if err != nil {
 		return err
@@ -76,21 +120,13 @@ func Run(ctx context.Context, _ string) error {
 		return err
 	}
 
-	enc, err := encoderFor(*outFmt)
-	if err != nil {
-		return err
-	}
-
-	outFile := *outPath
-	if ext := filepath.Ext(outFile); ext == "" || !strings.EqualFold(ext, "."+*outFmt) {
-		outFile += "." + *outFmt
-	}
-
-	dst, err := os.Create(outFile)
+	// Create output file
+	dst, err := os.Create(outFilename)
 	if err != nil {
 		return err
 	}
 	defer dst.Close()
 
+	// Encode and save the final image
 	return enc(dst, outImg)
 }

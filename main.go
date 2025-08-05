@@ -2,47 +2,36 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/rifux/Go-BasicBorderScanner/internal/app/cli"
 	"github.com/rifux/Go-BasicBorderScanner/internal/app/gui"
 )
 
-var (
-	forceGUI = flag.Bool("gui", false, "force GUI mode")
-	forceCLI = flag.Bool("cli", false, "force CLI mode")
-	logMode  = flag.String("log", "auto", "log output mode: auto|json|text")
-)
-
 const helpText = `Go-BasicBorderScanner [https://rifux.dev]
 
+A simple tool to find and draw the contour of an object in an image.
+
 USAGE:
-  %s [flags]
+  %s <command> [flags]
 
-GLOBAL FLAGS:
-  -gui       force GUI mode (default on supported platforms)
-  -cli       force CLI mode
-  -log mode  log output mode: auto|json|text (default "auto")
+COMMANDS:
+  gui     Run the application in graphical user interface mode.
+  cli     Run the application in command-line interface mode.
+  help    Show this help message.
 
-CLI MODE FLAGS (only when -cli is given or GUI unavailable):
-  -in file      input image (png, jpg, jpeg, gif, tiff, bmp)
-  -out file     output file (default "out.png")
-  -outfmt fmt   output format: png|jpeg|gif|tiff|bmp (default "png")
-  -h, --help    show this help and exit
-
-EXAMPLES:
-  GUI:   %s
-  CLI:   %s -cli -in scan.jpg -out result.png
+Run '%s <command> --help' for more information on a command.
 `
 
 func printHelp() {
-	fmt.Printf(helpText, filepath.Base(os.Args[0]), os.Args[0], os.Args[0])
+	p := filepath.Base(os.Args[0])
+	fmt.Printf(helpText, p, p)
 }
 
 func hasGUI() bool {
@@ -52,67 +41,65 @@ func hasGUI() bool {
 		case "386", "amd64", "arm64":
 			return true
 		}
-		return false
 	case "darwin":
 		switch runtime.GOARCH {
 		case "amd64", "arm64":
 			return true
 		}
-		return false
 	case "linux":
 		switch runtime.GOARCH {
 		case "386", "amd64", "arm", "arm64", "loong64", "mips64le", "ppc64le", "riscv64", "s390x":
 			return true
 		}
-		return false
 	case "freebsd", "openbsd", "netbsd", "dragonfly":
 		if runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64" {
 			return true
 		}
-		return false
-	case "android", "ios":
-		return true
-	default:
-		return false
 	}
+	return false
 }
 
 func main() {
-	flag.Usage = printHelp
-	flag.Parse()
-
-	// show help for common help flags
-	for _, a := range os.Args[1:] {
-		switch a {
-		case "-h", "--help", "help":
-			printHelp()
-			return
-		}
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	var args []string
 	var mode string
-	switch {
-	case *forceCLI:
-		mode = "cli"
-	case *forceGUI:
-		mode = "gui"
-	case hasGUI():
-		mode = "gui"
-	default:
-		mode = "cli"
+
+	if len(os.Args) < 2 {
+		if hasGUI() {
+			mode = "gui"
+			args = os.Args[1:] // Pass all args to gui
+		} else {
+			printHelp()
+			return
+		}
+	} else {
+		mode = os.Args[1]
+		args = os.Args[2:] // Args for the command
 	}
 
 	var err error
-	switch mode {
+	switch strings.ReplaceAll(mode, "-", "") {
 	case "gui":
-		err = gui.Run(ctx, *logMode)
+		// Assuming gui.Run is updated to parse its own flags from its args
+		err = gui.Run(ctx, "")
 	case "cli":
-		err = cli.Run(ctx, *logMode)
+		err = cli.Run(ctx, args)
+	case "help", "h":
+		printHelp()
+	default:
+		// Default to GUI if the first arg isn't a known command but GUI is available
+		if hasGUI() {
+			err = gui.Run(ctx, "")
+		} else {
+			fmt.Printf("Error: Unknown command %q\n\n", mode)
+			printHelp()
+			os.Exit(1)
+		}
 	}
+
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 }
