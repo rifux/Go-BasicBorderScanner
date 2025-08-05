@@ -1,0 +1,7 @@
+Website = "https://rifux.dev"
+
+[Details]
+  Name = "Go-BasicBorderScanner"
+  ID = "dev.rifux.goborder"
+  Version = "1.0.0"
+  Build = 8
